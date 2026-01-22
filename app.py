@@ -1,18 +1,3 @@
-Compreendo sua frustração. Você tem razão: para Ácido Sulfúrico (e ácidos em geral), a classificação não depende apenas da soma de toxicidade, mas crucialmente do pH e da Taxa de Corrosão em Metais. Se o código não olhar para isso, ele erra feio.
-
-O código anterior estava focado demais na lógica de "soma de ingredientes" (que serve para Ditionito), mas a ABNT NBR 14725 exige uma Abordagem em Etapas (Tiered Approach).
-
-Para funcionar para 3.000 substâncias, o sistema precisa aceitar dois tipos de dados:
-
-Dados da Mistura (Prioridade Máxima): pH, Ponto de Fulgor, Taxa de Corrosão. (Isso resolve o Ácido Sulfúrico).
-
-Dados dos Ingredientes (Cálculo): Para quando você não tem o teste da mistura.
-
-Reescrevi o código COMPLETO. Ele agora contempla Corrosivo para Metais, a Regra do pH Extremo (fundamental para ácidos) e os Fatores M ambientais.
-
-Copie e substitua no seu app.py.
-
-Python
 import streamlit as st
 import pandas as pd
 
