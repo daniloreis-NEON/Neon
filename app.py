@@ -371,13 +371,13 @@ if st.session_state.ingredientes:
         with c_res2:
             st.warning("☠️ Perigos à Saúde")
             for k, v in r_sau.items():
-                if "NC" not in v and "Não" not in v: st.markdown(f"**{k}:** 🔴 {v}")
+                if "NC" not in v: st.markdown(f"**{k}:** 🔴 {v}")
                 else: st.markdown(f"**{k}:** 🟢 {v}")
                 
         with c_res3:
             st.success("🐟 Perigos Ambientais")
             for k, v in r_amb.items():
-                if "NC" not in v and "Não" not in v: st.markdown(f"**{k}:** 🔴 {v}")
+                if "NC" not in v: st.markdown(f"**{k}:** 🔴 {v}")
                 else: st.markdown(f"**{k}:** 🟢 {v}")
 
 else:
