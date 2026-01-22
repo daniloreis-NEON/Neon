@@ -2,301 +2,372 @@ import streamlit as st
 import pandas as pd
 
 # ==========================================
-# 1. TABELAS DE CONVERSÃO (NORMA ABNT)
+# 1. TABELAS E CONSTANTES (ABNT NBR 14725)
 # ==========================================
-# Tabela 17 - Conversão de Categoria para Valor Numérico (Estimativa Pontual)
+
+# Tabela 17 - Conversão de Categoria para Estimativa Pontual (ATE)
 CONVERSAO_ATE = {
     'oral': {'1': 0.5, '2': 5, '3': 100, '4': 500, '5': 2500, 'NC': None},
     'dermica': {'1': 5, '2': 50, '3': 300, '4': 1100, '5': 2500, 'NC': None},
-    'inalacao': {'1': 0.05, '2': 0.5, '3': 3, '4': 11, 'NC': None} # Vapores
+    'inalacao_vapores': {'1': 0.05, '2': 0.5, '3': 3, '4': 11, 'NC': None},
+    'inalacao_poeiras': {'1': 0.005, '2': 0.05, '3': 0.5, '4': 1.5, 'NC': None}
 }
 
 # ==========================================
-# 2. ESTRUTURA DE DADOS
+# 2. CLASSE DE DADOS DO INGREDIENTE
 # ==========================================
 class Ingrediente:
     def __init__(self, nome, concentracao, 
                  # Saúde
-                 ate_oral_val=None, ate_oral_cat='NC', # Valor ou Categoria
+                 ate_oral=None, ate_dermica=None, 
                  cat_pele='NC', cat_olho='NC',
-                 cat_resp_sens='NC', cat_pele_sens='NC',
-                 cat_muta='NC', cat_carc='NC', cat_repro='NC', 
-                 cat_stot_se='NC', cat_stot_re='NC',
+                 cat_sens_resp='NC', cat_sens_pele='NC',
+                 cat_muta='NC', cat_carc='NC', cat_repro='NC', cat_lact='NC',
+                 cat_stot_se='NC', cat_stot_re='NC', cat_aspiracao='NC',
                  # Ambiental
                  cat_aq_agudo='None', cat_aq_cronico='None',
                  fator_m_agudo=1, fator_m_cronico=1,
-                 # Físicos (Propriedades intrínsecas para alerta)
-                 fisico_autoaquecimento='NC'):
+                 # Físicos (Propriedades intrínsecas para herança de risco)
+                 fisico_autoaquecimento='NC', fisico_solido_inf='NC', fisico_oxidante='NC'):
         
         self.nome = nome
         self.c = float(concentracao)
         
-        # Lógica Híbrida para ATE: Se usuário deu valor, usa valor. Se deu Categoria, converte.
-        if ate_oral_val and ate_oral_val > 0:
-            self.ate_oral = ate_oral_val
-        else:
-            self.ate_oral = CONVERSAO_ATE['oral'].get(ate_oral_cat)
-
-        self.cat_pele = cat_pele
-        self.cat_olho = cat_olho
-        self.cat_resp_sens = cat_resp_sens
-        self.cat_pele_sens = cat_pele_sens
+        # Normalização de Toxicidade Aguda
+        self.ate_oral = ate_oral if ate_oral and ate_oral > 0 else None
+        self.ate_dermica = ate_dermica if ate_dermica and ate_dermica > 0 else None
+        
+        # Categorias Saúde
+        self.cat_pele = str(cat_pele).upper()
+        self.cat_olho = str(cat_olho).upper()
+        self.cat_sens_resp = cat_sens_resp
+        self.cat_sens_pele = cat_sens_pele
         self.cat_muta = cat_muta
         self.cat_carc = cat_carc
         self.cat_repro = cat_repro
+        self.cat_lact = cat_lact
         self.cat_stot_se = cat_stot_se
         self.cat_stot_re = cat_stot_re
-        
-        # Conversão de categorias ambientais para números inteiros para cálculo
+        self.cat_aspiracao = cat_aspiracao
+
+        # Categorias Ambientais (Convertendo para Inteiro para facilitar soma)
         self.cat_aq_agudo = int(cat_aq_agudo) if cat_aq_agudo != 'None' else None
         self.cat_aq_cronico = int(cat_aq_cronico) if cat_aq_cronico != 'None' else None
         self.fator_m_agudo = int(fator_m_agudo)
         self.fator_m_cronico = int(fator_m_cronico)
         
+        # Físicos
         self.fisico_autoaquecimento = fisico_autoaquecimento
+        self.fisico_solido_inf = fisico_solido_inf
+        self.fisico_oxidante = fisico_oxidante
 
 # ==========================================
-# 3. MOTOR GHS (LÓGICA EXTRAÍDA DA NORMA)
+# 3. MOTOR DE CÁLCULO (CORE LOGIC)
 # ==========================================
 class MotorGHS:
     def __init__(self, ingredientes, dados_mistura):
         self.ingredientes = ingredientes
-        self.mistura = dados_mistura
+        self.mistura = dados_mistura # Dicionário com dados físicos da mistura
 
-    # --- PERIGOS FÍSICOS (Seção 5.2) ---
+    # --- BLOCO 1: PERIGOS FÍSICOS (Baseado na Mistura) ---
     def classificar_fisicos(self):
         res = {}
         
-        # 1. Líquidos Inflamáveis (Tabela 6)
+        # 1. Líquidos Inflamáveis (Seção 5.2.6 - Tabela 6)
         fp = self.mistura.get('flash_point')
         bp = self.mistura.get('boiling_point')
         
         if fp is not None and bp is not None:
-            if fp < 23 and bp <= 35: res['Líquido Inflamável'] = 'Categoria 1'
-            elif fp < 23 and bp > 35: res['Líquido Inflamável'] = 'Categoria 2'
-            elif 23 <= fp <= 60: res['Líquido Inflamável'] = 'Categoria 3'
-            elif 60 < fp <= 93: res['Líquido Inflamável'] = 'Categoria 4'
+            if fp < 23 and bp <= 35: res['Líquido Inflamável'] = 'Categoria 1 (H224)'
+            elif fp < 23 and bp > 35: res['Líquido Inflamável'] = 'Categoria 2 (H225)'
+            elif 23 <= fp <= 60: res['Líquido Inflamável'] = 'Categoria 3 (H226)'
+            elif 60 < fp <= 93: res['Líquido Inflamável'] = 'Categoria 4 (H227)'
             else: res['Líquido Inflamável'] = 'NC'
         else:
-            res['Líquido Inflamável'] = 'NC (Dados insuficientes)'
+            res['Líquido Inflamável'] = 'NC (Requer dados de FP e PE)'
 
-        # 2. Corrosivo Metais (Taxa > 6.25mm/ano)
-        corr = self.mistura.get('corrosion_rate')
-        if corr and corr > 6.25:
-            res['Corrosivo p/ Metais'] = 'Categoria 1'
+        # 2. Corrosivo para Metais (Seção 5.2.16)
+        corr_rate = self.mistura.get('corrosion_rate')
+        if corr_rate is not None and corr_rate > 6.25:
+            res['Corrosivo p/ Metais'] = 'Categoria 1 (H290)'
         else:
             res['Corrosivo p/ Metais'] = 'NC'
+
+        # 3. Herança de Riscos (Sólidos, Autoaquecimento, Oxidantes)
+        # Como não há cálculo de mistura para estes, verificamos se há ingrediente perigoso presente
+        if any(i.fisico_autoaquecimento != 'NC' for i in self.ingredientes):
+            res['Autoaquecimento'] = 'ALERTA: Contém ingrediente Autoaquecido'
+        
+        if any(i.fisico_solido_inf != 'NC' for i in self.ingredientes):
+            res['Sólido Inflamável'] = 'ALERTA: Contém sólido inflamável'
             
-        # 3. Autoaquecimento (Herança de Risco - Ditionito)
-        if any(i.fisico_autoaquecimento == '1' for i in self.ingredientes):
-            res['Autoaquecimento'] = 'Categoria 1 (Alerta: Ingrediente Cat 1 presente)'
-        else:
-            res['Autoaquecimento'] = 'NC'
+        if any(i.fisico_oxidante != 'NC' for i in self.ingredientes):
+            res['Oxidante'] = 'ALERTA: Contém substância oxidante'
 
         return res
 
-    # --- PERIGOS À SAÚDE (Seção 5.3) ---
+    # --- BLOCO 2: PERIGOS À SAÚDE (Cálculos e Limites) ---
     def classificar_saude(self):
         res = {}
-        
-        # 1. Toxicidade Aguda Oral (Fórmula Harmônica)
-        soma_fracao = 0
-        conc_desconhecida = 0
-        for i in self.ingredientes:
-            if i.ate_oral:
-                soma_fracao += (i.c / i.ate_oral)
-            else:
-                conc_desconhecida += i.c
-        
-        if soma_fracao > 0:
-            base = 100 - conc_desconhecida if conc_desconhecida > 10 else 100
-            ate_mix = base / soma_fracao
+
+        # A. Toxicidade Aguda (Fórmula com ajuste para desconhecidos)
+        def calc_ate_mix(via):
+            soma_inv = 0
+            conc_desc = 0
+            for i in self.ingredientes:
+                val = getattr(i, f'ate_{via}')
+                if val: soma_inv += (i.c / val)
+                else: conc_desc += i.c
             
-            # Tabela 16 - Faixas
+            if soma_inv == 0: return "NC"
+            
+            # Fórmula ABNT: Ajuste se desconhecidos > 10%
+            numerador = 100 - conc_desc if conc_desc > 10 else 100
+            if numerador <= 0: return "NC (Dados insuficientes)"
+            
+            ate_mix = numerado / soma_inv
+            return ate_mix
+
+        # Oral
+        ate_oral = calc_ate_mix('oral')
+        if isinstance(ate_oral, float):
             cat = 'NC'
-            if ate_mix <= 5: cat = 'Categoria 1'
-            elif ate_mix <= 50: cat = 'Categoria 2'
-            elif ate_mix <= 300: cat = 'Categoria 3'
-            elif ate_mix <= 2000: cat = 'Categoria 4'
-            elif ate_mix <= 5000: cat = 'Categoria 5'
-            res['Tox. Aguda Oral'] = f"{cat} (ATEmix: {ate_mix:.1f} mg/kg)"
+            if ate_oral <= 5: cat = 'Categoria 1 (H300)'
+            elif ate_oral <= 50: cat = 'Categoria 2 (H300)'
+            elif ate_oral <= 300: cat = 'Categoria 3 (H301)'
+            elif ate_oral <= 2000: cat = 'Categoria 4 (H302)'
+            elif ate_oral <= 5000: cat = 'Categoria 5 (H303)'
+            res['Tox. Aguda Oral'] = f"{cat} (ATEmix: {ate_oral:.1f})"
         else:
             res['Tox. Aguda Oral'] = "NC"
 
-        # 2. Corrosão Pele (Soma Ponderada)
+        # B. Corrosão/Irritação (Regras de Prioridade e Soma)
         ph = self.mistura.get('ph')
+        
+        # 1. Prioridade pH
         if ph is not None and (ph <= 2 or ph >= 11.5):
-            res['Pele'] = 'Categoria 1 (pH Extremo)'
+            res['Pele'] = 'Categoria 1 (pH Extremo - H314)'
+            res['Olhos'] = 'Categoria 1 (pH Extremo - H318)'
         else:
-            # Filtra somas
+            # 2. Soma Ponderada Pele
             s1 = sum(i.c for i in self.ingredientes if i.cat_pele in ['1', '1A', '1B', '1C'])
             s2 = sum(i.c for i in self.ingredientes if i.cat_pele == '2')
-            s3 = sum(i.c for i in self.ingredientes if i.cat_pele == '3')
             
-            if s1 >= 5: res['Pele'] = 'Categoria 1'
-            elif s1 >= 1 or s2 >= 10 or (10*s1 + s2) >= 10: res['Pele'] = 'Categoria 2'
-            elif s3 >= 10 or (10*s1 + s2 + s3) >= 10: res['Pele'] = 'Categoria 3'
+            if s1 >= 5: res['Pele'] = 'Categoria 1 (H314)'
+            elif s1 >= 1 or s2 >= 10 or (10*s1 + s2) >= 10: res['Pele'] = 'Categoria 2 (H315)'
+            elif (10*s1 + s2) >= 10: res['Pele'] = 'Categoria 3 (H316)' # Simplificado
             else: res['Pele'] = 'NC'
 
-        # 3. Olhos (Precedência Pele Cat 1)
-        if 'Categoria 1' in res.get('Pele', ''):
-            res['Olhos'] = 'Categoria 1 (Devido à Pele)'
-        else:
-            # Soma: Pele Cat 1 conta como Olho Cat 1
-            s1 = sum(i.c for i in self.ingredientes if i.cat_olho == '1' or i.cat_pele in ['1', '1A', '1B', '1C'])
-            s2 = sum(i.c for i in self.ingredientes if i.cat_olho in ['2', '2A', '2B'])
+            # 3. Soma Ponderada Olhos (Pele Cat 1 conta como Olho Cat 1)
+            s_eye1 = sum(i.c for i in self.ingredientes if i.cat_olho == '1' or i.cat_pele in ['1', '1A', '1B', '1C'])
+            s_eye2 = sum(i.c for i in self.ingredientes if i.cat_olho in ['2', '2A', '2B'])
             
-            if s1 >= 3: res['Olhos'] = 'Categoria 1'
-            elif s1 >= 1 or s2 >= 10 or (10*s1 + s2) >= 10: res['Olhos'] = 'Categoria 2A'
+            if s_eye1 >= 3: res['Olhos'] = 'Categoria 1 (H318)'
+            elif s_eye1 >= 1 or s_eye2 >= 10 or (10*s_eye1 + s_eye2) >= 10: res['Olhos'] = 'Categoria 2A (H319)'
             else: res['Olhos'] = 'NC'
 
-        # 4. CMR e STOT (Limites de Corte)
+        # C. Crônicos (Limites de Corte / Cut-off)
+        def check_cutoff(attr, target_cats, limit):
+            return any(getattr(i, attr) in target_cats and i.c >= limit for i in self.ingredientes)
+
         # Carcinogenicidade
-        if any(i.cat_carc in ['1', '1A', '1B'] and i.c >= 0.1 for i in self.ingredientes): res['Carcinogenicidade'] = 'Categoria 1'
-        elif any(i.cat_carc == '2' and i.c >= 1.0 for i in self.ingredientes): res['Carcinogenicidade'] = 'Categoria 2' # Pode configurar para 0.1%
+        if check_cutoff('cat_carc', ['1', '1A', '1B'], 0.1): res['Carcinogenicidade'] = 'Categoria 1 (H350)'
+        elif check_cutoff('cat_carc', ['2'], 1.0): res['Carcinogenicidade'] = 'Categoria 2 (H351)' # Nota: Pode ser 0.1 ou 1.0
         else: res['Carcinogenicidade'] = 'NC'
-        
-        # STOT Única
-        if any(i.cat_stot_se == '1' and i.c >= 10.0 for i in self.ingredientes): res['STOT SE'] = 'Categoria 1'
-        elif any((i.cat_stot_se == '1' and 1.0 <= i.c < 10.0) or (i.cat_stot_se == '2' and i.c >= 10.0) for i in self.ingredientes): res['STOT SE'] = 'Categoria 2'
-        elif any(i.cat_stot_se == '3' and i.c >= 20.0 for i in self.ingredientes): res['STOT SE'] = 'Categoria 3'
+
+        # Mutagenicidade
+        if check_cutoff('cat_muta', ['1', '1A', '1B'], 0.1): res['Mutagenicidade'] = 'Categoria 1 (H340)'
+        elif check_cutoff('cat_muta', ['2'], 1.0): res['Mutagenicidade'] = 'Categoria 2 (H341)'
+        else: res['Mutagenicidade'] = 'NC'
+
+        # Reprodução
+        if check_cutoff('cat_repro', ['1', '1A', '1B'], 0.3): res['Reprodução'] = 'Categoria 1 (H360)'
+        elif check_cutoff('cat_repro', ['2'], 3.0): res['Reprodução'] = 'Categoria 2 (H361)'
+        else: res['Reprodução'] = 'NC'
+
+        # STOT SE
+        if check_cutoff('cat_stot_se', ['1'], 10): res['STOT SE'] = 'Categoria 1 (H370)'
+        elif check_cutoff('cat_stot_se', ['2'], 10) or \
+             any(i.cat_stot_se == '1' and 1.0 <= i.c < 10 for i in self.ingredientes):
+             res['STOT SE'] = 'Categoria 2 (H371)'
+        elif check_cutoff('cat_stot_se', ['3'], 20): res['STOT SE'] = 'Categoria 3 (H335/H336)'
         else: res['STOT SE'] = 'NC'
 
         return res
 
-    # --- PERIGOS AMBIENTAIS (Seção 5.4 - Fator M) ---
+    # --- BLOCO 3: PERIGOS AO MEIO AMBIENTE (Fator M) ---
     def classificar_ambiental(self):
         res = {}
         
-        # Agudo: Soma(Conc * M) >= 25%
+        # Soma Ponderada Aguda: Soma(C * M)
         soma_aguda_1 = sum(i.c * i.fator_m_agudo for i in self.ingredientes if i.cat_aq_agudo == 1)
         soma_aguda_2 = sum(i.c for i in self.ingredientes if i.cat_aq_agudo == 2)
         soma_aguda_3 = sum(i.c for i in self.ingredientes if i.cat_aq_agudo == 3)
 
-        if soma_aguda_1 >= 25: res['Aquático Agudo'] = 'Categoria 1'
-        elif (soma_aguda_1 * 10 + soma_aguda_2) >= 25: res['Aquático Agudo'] = 'Categoria 2'
-        elif (soma_aguda_1 * 100 + soma_aguda_2 * 10 + soma_aguda_3) >= 25: res['Aquático Agudo'] = 'Categoria 3'
+        if soma_aguda_1 >= 25: res['Aquático Agudo'] = 'Categoria 1 (H400)'
+        elif (soma_aguda_1 * 10 + soma_aguda_2) >= 25: res['Aquático Agudo'] = 'Categoria 2 (H401)'
+        elif (soma_aguda_1 * 100 + soma_aguda_2 * 10 + soma_aguda_3) >= 25: res['Aquático Agudo'] = 'Categoria 3 (H402)'
         else: res['Aquático Agudo'] = 'NC'
 
-        # Crônico
+        # Soma Ponderada Crônica
         soma_cron_1 = sum(i.c * i.fator_m_cronico for i in self.ingredientes if i.cat_aq_cronico == 1)
         soma_cron_2 = sum(i.c for i in self.ingredientes if i.cat_aq_cronico == 2)
         soma_cron_3 = sum(i.c for i in self.ingredientes if i.cat_aq_cronico == 3)
         soma_cron_4 = sum(i.c for i in self.ingredientes if i.cat_aq_cronico == 4)
 
-        if soma_cron_1 >= 25: res['Aquático Crônico'] = 'Categoria 1'
-        elif (soma_cron_1 * 10 + soma_cron_2) >= 25: res['Aquático Crônico'] = 'Categoria 2'
-        elif (soma_cron_1 * 100 + soma_cron_2 * 10 + soma_cron_3) >= 25: res['Aquático Crônico'] = 'Categoria 3'
-        elif (soma_cron_1 + soma_cron_2 + soma_cron_3 + soma_cron_4) >= 25: res['Aquático Crônico'] = 'Categoria 4'
+        if soma_cron_1 >= 25: res['Aquático Crônico'] = 'Categoria 1 (H410)'
+        elif (soma_cron_1 * 10 + soma_cron_2) >= 25: res['Aquático Crônico'] = 'Categoria 2 (H411)'
+        elif (soma_cron_1 * 100 + soma_cron_2 * 10 + soma_cron_3) >= 25: res['Aquático Crônico'] = 'Categoria 3 (H412)'
+        elif (soma_cron_1 + soma_cron_2 + soma_cron_3 + soma_cron_4) >= 25: res['Aquático Crônico'] = 'Categoria 4 (H413)'
         else: res['Aquático Crônico'] = 'NC'
 
         return res
 
-    def executar_analise(self):
-        r1 = self.classificar_fisicos()
-        r2 = self.classificar_saude()
-        r3 = self.classificar_ambiental()
-        return {**r1, **r2, **r3}
-
 # ==========================================
-# 4. INTERFACE STREAMLIT
+# 4. INTERFACE GRÁFICA (STREAMLIT)
 # ==========================================
-st.set_page_config(page_title="GHS Pro ABNT", layout="wide")
-st.title("🛡️ Classificador GHS Profissional - ABNT NBR 14725")
+st.set_page_config(page_title="GHS Master ABNT", layout="wide", page_icon="🧪")
 
+st.title("🛡️ Sistema GHS - ABNT NBR 14725")
+st.markdown("### Classificação Automática de Misturas e Substâncias")
+
+# Inicialização de Estado
 if 'ingredientes' not in st.session_state:
     st.session_state.ingredientes = []
 
-# --- COLUNA LATERAL: CADASTRO ---
+# --- PAINEL ESQUERDO: CADASTRO ---
 with st.sidebar:
     st.header("1. Cadastro de Ingrediente")
-    nome = st.text_input("Nome da Substância", "Ex: Ditionito de Sódio")
-    conc = st.number_input("Concentração (%)", 0.0, 100.0, 10.0, step=0.1)
-    
-    t1, t2, t3 = st.tabs(["☠️ Saúde", "🐟 Ambiental", "🔥 Físicos"])
-    
-    with t1:
-        st.markdown("**Toxicidade Aguda**")
-        tipo_dado = st.radio("Dado disponível:", ["Categoria GHS", "Valor Numérico (DL50)"])
+    with st.form("form_ingrediente", clear_on_submit=True):
+        nome = st.text_input("Nome Química", "Ex: Ditionito de Sódio")
+        conc = st.number_input("Concentração na Mistura (%)", 0.0, 100.0, 10.0, step=0.1)
+        
+        st.markdown("---")
+        st.markdown("#### ☠️ Dados de Saúde")
+        tipo_ate = st.radio("Toxicidade Aguda", ["Valor DL50", "Categoria GHS"])
         
         ate_o_val = 0.0
-        ate_o_cat = 'NC'
-        
-        if tipo_dado == "Valor Numérico (DL50)":
+        if tipo_ate == "Valor DL50":
             ate_o_val = st.number_input("DL50 Oral (mg/kg)", 0.0)
         else:
-            ate_o_cat = st.selectbox("Categoria Oral", ['NC', '1', '2', '3', '4', '5'])
-            
-        st.markdown("**Outros Perigos**")
-        pele = st.selectbox("Pele", ['NC', '1A', '1B', '1C', '2', '3'])
-        olho = st.selectbox("Olhos", ['NC', '1', '2A', '2B'])
-        carc = st.selectbox("Carcinogenicidade", ['NC', '1A', '1B', '2'])
-        stot = st.selectbox("STOT Única", ['NC', '1', '2', '3'])
+            cat_ate = st.selectbox("Cat. Oral", ['NC', '1', '2', '3', '4', '5'])
+            ate_o_val = CONVERSAO_ATE['oral'].get(cat_ate)
 
-    with t2:
-        agudo = st.selectbox("Aq. Agudo", ['None', '1', '2', '3'])
-        m_ag = st.number_input("Fator M (Agudo)", 1, 10000, 1)
-        cronico = st.selectbox("Aq. Crônico", ['None', '1', '2', '3', '4'])
-        m_cr = st.number_input("Fator M (Crônico)", 1, 10000, 1)
+        c1, c2 = st.columns(2)
+        with c1:
+            cat_pele = st.selectbox("Pele", ['NC', '1A', '1B', '1C', '2', '3'])
+            cat_carc = st.selectbox("Carcinogênico", ['NC', '1A', '1B', '2'])
+            cat_stot = st.selectbox("STOT Única", ['NC', '1', '2', '3'])
+        with c2:
+            cat_olho = st.selectbox("Olhos", ['NC', '1', '2A', '2B'])
+            cat_muta = st.selectbox("Mutagênico", ['NC', '1A', '1B', '2'])
+            cat_repro = st.selectbox("Reprodutivo", ['NC', '1A', '1B', '2'])
 
-    with t3:
-        autoaq = st.selectbox("Autoaquecimento", ['NC', '1', '2'])
+        st.markdown("#### 🐟 Dados Ambientais")
+        ac1, ac2 = st.columns(2)
+        with ac1:
+            cat_aq_ag = st.selectbox("Aq. Agudo", ['None', '1', '2', '3'])
+            fator_ag = st.number_input("Fator M Agudo", 1, 10000, 1)
+        with ac2:
+            cat_aq_cr = st.selectbox("Aq. Crônico", ['None', '1', '2', '3', '4'])
+            fator_cr = st.number_input("Fator M Crônico", 1, 10000, 1)
 
-    if st.button("➕ Adicionar Ingrediente"):
-        novo = Ingrediente(
-            nome, conc, 
-            ate_oral_val=ate_o_val, ate_oral_cat=ate_o_cat,
-            cat_pele=pele, cat_olho=olho, cat_carc=carc, cat_stot_se=stot,
-            cat_aq_agudo=agudo, cat_aq_cronico=cronico, 
-            fator_m_agudo=m_ag, fator_m_cronico=m_cr,
-            fisico_autoaquecimento=autoaq
-        )
-        st.session_state.ingredientes.append(novo)
-        st.success("Adicionado!")
+        st.markdown("#### 🔥 Dados Físicos (Ingrediente)")
+        fis_auto = st.selectbox("Autoaquecimento", ['NC', '1', '2'])
+        fis_sol = st.selectbox("Sólido Inflamável", ['NC', '1', '2'])
+        fis_ox = st.selectbox("Sólido Oxidante", ['NC', '1', '2', '3'])
 
-# --- ÁREA PRINCIPAL ---
-c1, c2 = st.columns([1.5, 1])
-
-with c1:
-    st.subheader("2. Composição da Mistura")
-    if st.session_state.ingredientes:
-        df = pd.DataFrame([{
-            'Nome': i.nome, 
-            '%': i.c, 
-            'Pele': i.cat_pele, 
-            'Aq. Agudo': i.cat_aq_agudo,
-            'Fator M': i.fator_m_agudo
-        } for i in st.session_state.ingredientes])
-        st.dataframe(df, use_container_width=True)
+        btn_add = st.form_submit_button("➕ Adicionar à Mistura")
         
-        if st.button("Limpar Lista"):
-            st.session_state.ingredientes = []
-            st.rerun()
-            
-    st.subheader("3. Dados Físicos da Mistura (Opcional)")
-    with st.expander("Preencher se houver testes da mistura"):
-        ph = st.number_input("pH", 0.0, 14.0, 7.0)
-        fp = st.number_input("Ponto de Fulgor (°C)", value=None, placeholder="Vazio se não testado")
-        bp = st.number_input("Ponto de Ebulição (°C)", value=None)
-        corr = st.number_input("Taxa Corrosão Aço (mm/ano)", 0.0)
+        if btn_add:
+            novo = Ingrediente(
+                nome, conc, ate_oral=ate_o_val,
+                cat_pele=cat_pele, cat_olho=cat_olho,
+                cat_carc=cat_carc, cat_muta=cat_muta, cat_repro=cat_repro, cat_stot_se=cat_stot,
+                cat_aq_agudo=cat_aq_ag, cat_aq_cronico=cat_aq_cr,
+                fator_m_agudo=fator_ag, fator_m_cronico=fator_cr,
+                fisico_autoaquecimento=fis_auto, fisico_solido_inf=fis_sol, fisico_oxidante=fis_ox
+            )
+            st.session_state.ingredientes.append(novo)
+            st.success("Adicionado!")
 
-with c2:
-    st.subheader("4. Classificação Final")
-    if st.button("🚀 Processar ABNT 14725", type="primary"):
-        if not st.session_state.ingredientes:
-            st.warning("Adicione ingredientes.")
-        else:
-            # Monta dados da mistura
-            dados_mix = {
-                'ph': ph, 
-                'flash_point': fp, 
-                'boiling_point': bp, 
-                'corrosion_rate': corr
-            }
-            
-            motor = MotorGHS(st.session_state.ingredientes, dados_mix)
-            resultado = motor.executar_analise()
-            
-            for perigo, classe in resultado.items():
-                cor = "green" if "NC" in classe else "red"
-                st.markdown(f"**{perigo}:** :{cor}[{classe}]")
+# --- PAINEL PRINCIPAL ---
+st.header("2. Definição da Mistura")
+
+# Tabela de Ingredientes
+if st.session_state.ingredientes:
+    data = []
+    total_conc = 0
+    for i in st.session_state.ingredientes:
+        data.append({
+            "Ingrediente": i.nome,
+            "%": i.c,
+            "DL50 Oral": i.ate_oral,
+            "Pele": i.cat_pele,
+            "Aq. Agudo": i.cat_aq_agudo,
+            "Autoaq.": i.fisico_autoaquecimento
+        })
+        total_conc += i.c
+    
+    st.dataframe(pd.DataFrame(data), use_container_width=True)
+    
+    if abs(total_conc - 100) > 0.1:
+        st.warning(f"⚠️ Soma das concentrações: {total_conc:.1f}% (Ideal: 100%)")
+    
+    if st.button("Limpar Lista"):
+        st.session_state.ingredientes = []
+        st.rerun()
+
+    st.write("---")
+    
+    # Dados Físicos da Mistura (Decisivos para Seção 5.2)
+    with st.expander("🧪 Dados de Ensaio da Mistura (Obrigatório para Físicos)", expanded=True):
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            ph = st.number_input("pH (Solução)", 0.0, 14.0, 7.0)
+        with c2:
+            fp = st.number_input("Ponto de Fulgor (°C)", value=None, placeholder="Vazio")
+        with c3:
+            bp = st.number_input("Ponto de Ebulição (°C)", value=None, placeholder="Vazio")
+        with c4:
+            corr = st.number_input("Taxa Corrosão (mm/ano)", 0.0)
+
+    # Botão de Cálculo
+    if st.button("🚀 CLASSIFICAR AGORA", type="primary"):
+        # Prepara dados
+        dados_mix = {
+            'ph': ph, 'flash_point': fp, 'boiling_point': bp, 'corrosion_rate': corr
+        }
+        
+        motor = MotorGHS(st.session_state.ingredientes, dados_mix)
+        
+        # Executa
+        r_fis = motor.classificar_fisicos()
+        r_sau = motor.classificar_saude()
+        r_amb = motor.classificar_ambiental()
+        
+        # Exibe Resultados
+        st.write("### 📝 Relatório de Classificação GHS")
+        
+        c_res1, c_res2, c_res3 = st.columns(3)
+        
+        with c_res1:
+            st.info("🔥 Perigos Físicos")
+            for k, v in r_fis.items():
+                if "NC" not in v: st.markdown(f"**{k}:** 🔴 {v}")
+                else: st.markdown(f"**{k}:** 🟢 {v}")
+                
+        with c_res2:
+            st.warning("☠️ Perigos à Saúde")
+            for k, v in r_sau.items():
+                if "NC" not in v: st.markdown(f"**{k}:** 🔴 {v}")
+                else: st.markdown(f"**{k}:** 🟢 {v}")
+                
+        with c_res3:
+            st.success("🐟 Perigos Ambientais")
+            for k, v in r_amb.items():
+                if "NC" not in v: st.markdown(f"**{k}:** 🔴 {v}")
+                else: st.markdown(f"**{k}:** 🟢 {v}")
+
+else:
+    st.info("👈 Comece adicionando ingredientes na barra lateral.")
